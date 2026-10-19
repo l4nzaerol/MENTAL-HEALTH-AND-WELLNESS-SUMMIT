@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Certificate of participation</title>
+    <style>
+      body {
+        margin: 0;
+        background: #f3f6f2;
+        color: #143d38;
+        font-family: "Segoe UI", system-ui, sans-serif;
+      }
+      .wrap {
+        width: min(1040px, calc(100% - 24px));
+        margin: 24px auto 48px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+      }
+      .lede {
+        margin: 0 0 18px;
+        color: #4d655f;
+      }
+      .certificate {
+        --cert-name-left: 50%;
+        --cert-name-top: 31.5%;
+        --cert-name-width: 100%;
+        --cert-name-font-size: 4.2cqi;
+        --cert-name-font-family: "Times New Roman", Georgia, serif;
+        --cert-name-font-weight: 200;
+        --cert-name-font-style: italic;
+        --cert-name-letter-spacing: 0;
+        --cert-name-color: #030303;
+        --cert-qr-left: 3.2%;
+        --cert-qr-top: 82%;
+        --cert-qr-size: 10.4%;
+        position: relative;
+        container-type: inline-size;
+        aspect-ratio: 2000 / 1414;
+        overflow: hidden;
+        border-radius: 8px;
+        box-shadow: 0 16px 40px rgba(20, 61, 56, 0.12);
+        background: #fff;
+      }
+      .certificate img.bg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: fill;
+      }
+      .certificate-name {
+        position: absolute;
+        left: var(--cert-name-left);
+        top: var(--cert-name-top);
+        width: var(--cert-name-width);
+        margin: 0;
+        transform: translate(-50%, -50%);
+        text-align: center;
+        font-family: var(--cert-name-font-family);
+        font-size: var(--cert-name-font-size);
+        font-style: var(--cert-name-font-style);
+        font-weight: var(--cert-name-font-weight);
+        letter-spacing: var(--cert-name-letter-spacing);
+        color: var(--cert-name-color);
+        text-transform: uppercase;
+        line-height: 1.18;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+      .certificate-name-text {
+        display: inline;
+        padding: 0 0.9cqi 0.12cqi;
+        border-bottom: 0.18cqi solid currentColor;
+        box-decoration-break: clone;
+        -webkit-box-decoration-break: clone;
+      }
+      .certificate-qr {
+        position: absolute;
+        left: var(--cert-qr-left);
+        top: var(--cert-qr-top);
+        width: var(--cert-qr-size);
+        aspect-ratio: 1;
+        padding: 6px;
+        background: #fff;
+        box-shadow: 0 2px 10px rgba(15, 23, 42, 0.16);
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 18px;
+      }
+      button {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        padding: 12px 20px;
+        background: #1f6f64;
+        color: #fff;
+        font: inherit;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.7;
+        cursor: wait;
+      }
+      .error {
+        background: #fff;
+        padding: 24px;
+        border-radius: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <? if (ok) { ?>
+        <h1>Your e-certificate</h1>
+        <p class="lede">
+          Scan this page from the QR code on the certificate. Use the button below to download a PNG copy.
+        </p>
+        <article class="certificate" id="certificate">
+          <img class="bg" id="template" alt="" />
+          <p class="certificate-name" id="cert-name"><span class="certificate-name-text"><?= String(cert.fullName || '').toUpperCase() ?></span></p>
+          <img class="certificate-qr" id="qr" alt="Certificate QR code" />
+        </article>
+        <p class="lede" id="status"></p>
+        <div class="actions">
+          <button type="button" id="download">Download certificate</button>
+        </div>
+      <? } else { ?>
+        <div class="error">
+          <h1>Certificate not found</h1>
+          <p><?= error ?></p>
+        </div>
+      <? } ?>
+    </div>
+    <? if (ok) { ?>
+    <?!= include('CertTemplateData'); ?>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+    <script>
+      const CERT = {
+        id: <?!= JSON.stringify(cert.id) ?>,
+        fullName: <?!= JSON.stringify(cert.fullName) ?>,
+        issuedAt: <?!= JSON.stringify(cert.issuedAt) ?>,
+      }
+      const VERIFY_URL = <?!= JSON.stringify(verifyUrl) ?>
+      const CERT_WIDTH = 2000
+      const CERT_HEIGHT = 1414
+      const certEl = document.getElementById('certificate')
+      const qrEl = document.getElementById('qr')
+      const templateEl = document.getElementById('template')
+      const statusEl = document.getElementById('status')
+      const downloadBtn = document.getElementById('download')
+      templateEl.src = window.CERT_TEMPLATE_DATA_URL || ''
+      QRCode.toDataURL(VERIFY_URL, {
+        margin: 1,
+        width: 220,
+        errorCorrectionLevel: 'M',
+        color: { dark: '#1b2744', light: '#ffffff' },
+      }).then(function (url) {
+        qrEl.src = url
+      })
+
+      function loadImage(src) {
+        return new Promise(function (resolve, reject) {
+          const image = new Image()
+          image.crossOrigin = 'anonymous'
+          image.onload = function () { resolve(image) }
+          image.onerror = function () { reject(new Error('Could not load certificate artwork')) }
+          image.src = src
+        })
+      }
+
+      function wrapText(ctx, text, maxWidth) {
+        const words = String(text || '').split(/\s+/)
+        const lines = []
+        let line = ''
+        words.forEach(function (word) {
+          const next = line ? line + ' ' + word : word
+          if (ctx.measureText(next).width > maxWidth && line) {
+            lines.push(line)
+            line = word
+          } else {
+            line = next
+          }
+        })
+        if (line) lines.push(line)
+        return lines
+      }
+
+      function boxOnCanvas(el, root) {
+        const box = el.getBoundingClientRect()
+        return {
+          x: ((box.left - root.left) / root.width) * CERT_WIDTH,
+          y: ((box.top - root.top) / root.height) * CERT_HEIGHT,
+          w: (box.width / root.width) * CERT_WIDTH,
+          h: (box.height / root.height) * CERT_HEIGHT,
+        }
+      }
+
+      async function renderPng() {
+        const template = await loadImage(templateEl.src)
+        const qr = await loadImage(qrEl.src)
+        const canvas = document.createElement('canvas')
+        canvas.width = CERT_WIDTH
+        canvas.height = CERT_HEIGHT
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(template, 0, 0, CERT_WIDTH, CERT_HEIGHT)
+
+        const root = certEl.getBoundingClientRect()
+        const nameEl = document.getElementById('cert-name')
+        const textEl = nameEl.querySelector('.certificate-name-text')
+        const nameStyle = getComputedStyle(nameEl)
+        const textStyle = getComputedStyle(textEl)
+        const nameBox = boxOnCanvas(nameEl, root)
+        const size = parseFloat(nameStyle.fontSize) * (CERT_WIDTH / root.width)
+        ctx.font = nameStyle.fontStyle + ' ' + nameStyle.fontWeight + ' ' + size + 'px ' + nameStyle.fontFamily
+        const lines = wrapText(ctx, String(CERT.fullName || '').toUpperCase(), nameBox.w)
+        const lineHeight = size * 1.18
+        const startY = nameBox.y + nameBox.h / 2 - ((lines.length - 1) * lineHeight) / 2
+        const centerX = nameBox.x + nameBox.w / 2
+        const underline = Math.max(1, parseFloat(textStyle.borderBottomWidth) * (CERT_HEIGHT / root.height) || size * 0.045)
+        const padX = parseFloat(textStyle.paddingLeft) * (CERT_WIDTH / root.width) || size * 0.2
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillStyle = nameStyle.color || '#1b2744'
+        ctx.strokeStyle = nameStyle.color || '#1b2744'
+        ctx.lineWidth = underline
+        ctx.lineCap = 'round'
+        lines.forEach(function (line, index) {
+          const y = startY + index * lineHeight
+          ctx.fillText(line, centerX, y)
+          const textWidth = ctx.measureText(line).width
+          const underlineY = y + size * 0.46
+          ctx.beginPath()
+          ctx.moveTo(centerX - textWidth / 2 - padX, underlineY)
+          ctx.lineTo(centerX + textWidth / 2 + padX, underlineY)
+          ctx.stroke()
+        })
+
+        const qrBox = boxOnCanvas(qrEl, root)
+        const qrStyle = getComputedStyle(qrEl)
+        const qrPadX = parseFloat(qrStyle.paddingLeft) * (CERT_WIDTH / root.width)
+        const qrPadY = parseFloat(qrStyle.paddingTop) * (CERT_HEIGHT / root.height)
+        ctx.fillStyle = qrStyle.backgroundColor || '#ffffff'
+        ctx.fillRect(qrBox.x, qrBox.y, qrBox.w, qrBox.h)
+        ctx.drawImage(qr, qrBox.x + qrPadX, qrBox.y + qrPadY, Math.max(1, qrBox.w - qrPadX * 2), Math.max(1, qrBox.h - qrPadY * 2))
+
+        return new Promise(function (resolve, reject) {
+          canvas.toBlob(function (blob) {
+            if (!blob) reject(new Error('Could not create the PNG.'))
+            else resolve(blob)
+          }, 'image/png')
+        })
+      }
+
+      downloadBtn.addEventListener('click', function () {
+        statusEl.textContent = 'Preparing PNG…'
+        downloadBtn.disabled = true
+        renderPng()
+          .then(function (blob) {
+            const url = URL.createObjectURL(blob)
+            const link = document.createElement('a')
+            const safeName = String(CERT.fullName || 'certificate')
+              .trim()
+              .replace(/[^\w]+/g, '-')
+              .replace(/^-|-$/g, '')
+            link.href = url
+            link.download = (CERT.id || 'certificate') + '-' + (safeName || 'certificate') + '.png'
+            document.body.appendChild(link)
+            link.click()
+            link.remove()
+            URL.revokeObjectURL(url)
+            statusEl.textContent = ''
+          })
+          .catch(function (error) {
+            statusEl.textContent = error.message || 'Could not download the PNG. Please try again.'
+          })
+          .then(function () {
+            downloadBtn.disabled = false
+          })
+      })
+    </script>
+    <? } ?>
+  </body>
+</html>
