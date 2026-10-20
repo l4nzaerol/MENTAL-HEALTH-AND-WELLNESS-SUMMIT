@@ -1,4 +1,9 @@
-const SPREADSHEET_ID = '1SLDoqGkR71wf2pnH5qvMxlwUyzKjOkqg9Vv7cL64fc0'
+// Mental Health Summit feedback → Google Sheet
+// Spreadsheet: https://docs.google.com/spreadsheets/d/1nvBpnwLSeE9NtCkALwqPM1pbzL2WgEGik17pCtuFFCY/edit
+// After changing this file: in the spreadsheet go to Extensions > Apps Script, paste this
+// Code.gs, then Deploy > New deployment (or Manage deployments > Edit > New version)
+// as a Web app: Execute as Me, Who has access: Anyone. Put that URL in VITE_APPS_SCRIPT_URL.
+const SPREADSHEET_ID = '1nvBpnwLSeE9NtCkALwqPM1pbzL2WgEGik17pCtuFFCY'
 const SHEET_NAME = 'Submissions'
 // Live website that shows certificates when a QR code is scanned (no trailing slash).
 // Also stored as script property PUBLIC_SITE_URL. The frontend origin from each
@@ -53,10 +58,12 @@ function speakerSheetHeader_(id) {
 const HEADER_ALIASES = {
   Name: 'FullName',
   'Full Name': 'FullName',
+  'Full name (Name to appear on certificate)': 'FullName',
   'Email Address': 'Email',
   School: 'School / organization',
   Organization: 'School / organization',
   'School/Organization': 'School / organization',
+  'School or organization': 'School / organization',
   VenueRating: 'Venue | Rating',
   VenueComment: 'Venue | Comments',
   SpeakersOverall: speakerSheetHeader_('overall'),
@@ -195,6 +202,34 @@ function doPost(e) {
 function setupSummitSheet() {
   const sheet = getSheet_()
   realignSheet_(sheet)
+}
+
+function testInsertSampleRow() {
+  const result = submitFeedback_({
+    fullName: 'Test Participant',
+    email: 'test-insert@example.com',
+    address: 'Test street, Cabuyao',
+    age: 18,
+    organization: 'Test School',
+    speakerAnswers: {
+      knowledge: 5,
+      clarity: 5,
+      engaging: 4,
+      examples: 4,
+      participation: 5,
+      professional: 5,
+      questions: 4,
+      overall: 5,
+      comments: 'Sample speaker comments',
+    },
+    venueRating: 4,
+    venueComment: 'Sample venue comments',
+    seminarRating: 5,
+    seminarComments: 'Sample summit comments',
+    idempotencyKey: Utilities.getUuid(),
+  })
+  Logger.log(result)
+  return result
 }
 
 function repairColumnAlignment() {
@@ -754,7 +789,7 @@ function validateSubmission_(payload) {
   if (!address) {
     throw new Error('Address is required')
   }
-  if (!Number.isInteger(age) || age < 1 || age > 120) {
+  if (!isFinite(age) || age !== Math.floor(age) || age < 1 || age > 120) {
     throw new Error('Age is required')
   }
   if (!organization) {
@@ -777,16 +812,10 @@ function submitFeedback_(payload) {
   try {
     const sheet = getSheet_()
     ensureHeaders_(sheet)
-    const headers = sheetHeaderNames_(sheet)
-    const emailCol = columnForHeader_(headers, 'Email')
+    const headers = writeHeaders_(sheet)
     const idempCol = columnForHeader_(headers, 'IdempotencyKey')
     const email = String(payload.email).toLowerCase().trim()
-    const existing = findRow_(sheet, emailCol, email) || findRow_(sheet, idempCol, payload.idempotencyKey)
-    if (existing) {
-      const certificate = rowToCertificate_(existing, headers)
-      certificate.verifyUrl = browserVerifyUrl_(payload, certificate.id, certificate.issuedAt)
-      return { ok: true, duplicate: true, certificate: certificate }
-    }
+    const retryRow = findRowNumber_(sheet, idempCol, payload.idempotencyKey)
 
     const certId = looksLikeCert_(payload.certificateId)
       ? String(payload.certificateId).trim()
@@ -797,17 +826,12 @@ function submitFeedback_(payload) {
     const verifyUrl = browserVerifyUrl_(payload, certId, issuedAt)
     const record = buildSubmissionRecord_(payload, certId, stamp, verifyUrl)
     const row = rowFromRecord_(record, HEADERS)
-    const width = HEADERS.length
-    if (sheet.getMaxColumns() < width) {
-      sheet.insertColumnsAfter(sheet.getMaxColumns(), width - sheet.getMaxColumns())
-    }
-    const nextRow = Math.max(sheet.getLastRow() + 1, 2)
-    sheet.getRange(nextRow, 1, 1, row.length).setValues([row])
+    writeDataRow_(sheet, retryRow || Math.max(sheet.getLastRow() + 1, 2), row)
     SpreadsheetApp.flush()
 
     return {
       ok: true,
-      duplicate: false,
+      duplicate: Boolean(retryRow),
       certificate: {
         id: certId,
         fullName: String(payload.fullName).trim(),
@@ -821,19 +845,40 @@ function submitFeedback_(payload) {
   }
 }
 
-function getSpreadsheet_() {
-  const active = SpreadsheetApp.getActive()
-  if (active && active.getId() === SPREADSHEET_ID) return active
-  try {
-    return SpreadsheetApp.openById(SPREADSHEET_ID)
-  } catch (error) {
-    if (active) return active
-    throw new Error(
-      'Could not open the submissions spreadsheet. Bind this script to https://docs.google.com/spreadsheets/d/' +
-        SPREADSHEET_ID +
-        '/edit',
-    )
+function writeHeaders_(sheet) {
+  const headers = sheetHeaderNames_(sheet)
+  if (headersMatch_(headers)) return headers.slice(0, HEADERS.length)
+  ensureHeaders_(sheet)
+  return sheetHeaderNames_(sheet).slice(0, HEADERS.length)
+}
+
+function writeDataRow_(sheet, rowNumber, row) {
+  const values = padRow_(row)
+  const width = values.length
+  if (sheet.getMaxColumns() < width) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), width - sheet.getMaxColumns())
   }
+  sheet.getRange(rowNumber, 1, 1, width).setValues([values])
+}
+
+function getSpreadsheet_() {
+  const wanted = String(SPREADSHEET_ID || '').trim()
+  const active = SpreadsheetApp.getActive()
+  if (active && (!wanted || active.getId() === wanted)) return active
+  if (wanted) {
+    try {
+      return SpreadsheetApp.openById(wanted)
+    } catch (error) {
+      if (active) return active
+      throw new Error(
+        'Could not open the submissions spreadsheet. Bind this script to the spreadsheet Extensions > Apps Script, then paste Code.gs and deploy as a web app. Spreadsheet: https://docs.google.com/spreadsheets/d/' +
+          wanted +
+          '/edit',
+      )
+    }
+  }
+  if (active) return active
+  throw new Error('Could not open the submissions spreadsheet.')
 }
 
 function getSheet_() {
@@ -841,7 +886,17 @@ function getSheet_() {
   let sheet = ss.getSheetByName(SHEET_NAME)
   if (!sheet) sheet = findSubmissionsSheet_(ss)
   if (!sheet) {
-    sheet = ss.insertSheet(SHEET_NAME)
+    const only = ss.getSheets()[0]
+    sheet = only || ss.insertSheet(SHEET_NAME)
+  }
+  if (sheet.getName() !== SHEET_NAME) {
+    try {
+      sheet.setName(SHEET_NAME)
+    } catch (error) {
+      // Keep the existing tab name if renaming is blocked.
+    }
+  }
+  if (sheet.getLastRow() < 1) {
     writeCanonicalLayout_(sheet, [HEADERS])
   }
   return sheet
@@ -872,19 +927,23 @@ function findSubmissionsSheet_(ss) {
   return sheets.length === 1 ? sheets[0] : null
 }
 
-function findRow_(sheet, column, value) {
-  if (!value || !column) return null
+function findRowNumber_(sheet, column, value) {
+  if (!value || !column) return 0
   const lastRow = sheet.getLastRow()
-  if (lastRow < 2) return null
+  if (lastRow < 2) return 0
   const needle = String(value).toLowerCase()
   const values = sheet.getRange(2, column, lastRow - 1, 1).getValues()
-  const width = Math.max(sheet.getLastColumn(), HEADERS.length)
   for (let i = 0; i < values.length; i += 1) {
-    if (String(values[i][0]).toLowerCase() === needle) {
-      return sheet.getRange(i + 2, 1, 1, width).getValues()[0]
-    }
+    if (String(values[i][0]).toLowerCase() === needle) return i + 2
   }
-  return null
+  return 0
+}
+
+function findRow_(sheet, column, value) {
+  const rowNumber = findRowNumber_(sheet, column, value)
+  if (!rowNumber) return null
+  const width = Math.max(sheet.getLastColumn(), HEADERS.length)
+  return sheet.getRange(rowNumber, 1, 1, width).getValues()[0]
 }
 
 function rowToCertificate_(row, headers) {

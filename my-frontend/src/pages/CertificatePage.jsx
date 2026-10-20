@@ -143,12 +143,12 @@ export default function CertificatePage({
   return (
     <main className="page certificate-page">
       <header className="hero-card compact">
-        <p className="eyebrow">Ok lang ’yan</p>
+        <p className="eyebrow">BAGONG CABUYAO MENTAL HEALTH AND WELLNESS SUMMIT</p>
         <h1>Certificate of Attendance</h1>
         <p className="lede">
           {fromForm
-            ? 'Download a PNG to keep a copy. Scanning the QR code later opens a download-only certificate page, not the feedback form.'
-            : 'This is the official e-certificate for this participant. You can download a PNG copy here. This page does not accept another feedback response.'}
+            ? 'Download a PNG to keep a copy. Scanning the QR code later opens a download-only certificate page.'
+            : 'This is the official e-certificate for this mental health and wellnes summit. You can download the PNG copy here.'}
         </p>
         {saveStatus === 'saving' ? (
           <p className="note">Saving your feedback in the background…</p>
