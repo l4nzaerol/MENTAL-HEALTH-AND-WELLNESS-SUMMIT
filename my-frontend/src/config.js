@@ -96,7 +96,10 @@ export const AGREEMENT_LABELS = {
   5: 'Strongly agree',
 }
 
-export const APPS_SCRIPT_URL = import.meta.env.VITE_APPS_SCRIPT_URL || ''
+export const APPS_SCRIPT_URL = String(
+  import.meta.env.VITE_APPS_SCRIPT_URL ||
+    'https://script.google.com/macros/s/AKfycbzsXiHSzlz_cg6Jsux3kox4EKKo2HpTkoKJ8cIBK20Rd3YpaQYb66-F2wwlKJ2prTJP/exec',
+).trim()
 
 export const PUBLIC_BASE_URL = String(import.meta.env.VITE_PUBLIC_BASE_URL || '').replace(/\/$/, '')
 

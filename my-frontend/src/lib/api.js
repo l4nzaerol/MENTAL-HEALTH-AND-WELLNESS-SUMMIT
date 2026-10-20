@@ -52,15 +52,46 @@ async function submitLocal(payload) {
   return { ok: true, duplicate: false, certificate: toCertificate(row), demo: true }
 }
 
+function sheetPayload(payload) {
+  const answers = payload.speakerAnswers || {}
+  return {
+    ...payload,
+    action: payload.action || 'submit',
+    fullName: payload.fullName,
+    name: payload.fullName,
+    email: payload.email,
+    address: payload.address,
+    age: payload.age,
+    organization: payload.organization,
+    school: payload.organization,
+    speakerAnswers: answers,
+    speakerKnowledge: answers.knowledge,
+    speakerClarity: answers.clarity,
+    speakerEngaging: answers.engaging,
+    speakerExamples: answers.examples,
+    speakerParticipation: answers.participation,
+    speakerProfessional: answers.professional,
+    speakerQuestions: answers.questions,
+    speakerOverall: answers.overall,
+    speakerComments: answers.comments || '',
+    speakersOverall: payload.speakersOverall || answers.overall,
+    venueRating: payload.venueRating,
+    venueComment: payload.venueComment || '',
+    seminarRating: payload.seminarRating,
+    seminarComments: payload.seminarComments || '',
+  }
+}
+
 async function postWithRetry(payload) {
   let lastError = null
+  const body = JSON.stringify(sheetPayload(payload))
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     try {
       const response = await fetch(APPS_SCRIPT_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload),
+        body,
         redirect: 'follow',
       })
 
@@ -71,6 +102,9 @@ async function postWithRetry(payload) {
       const data = await response.json()
       if (data.error === 'busy' || data.error === 'lock') {
         throw new Error('busy')
+      }
+      if (data.error) {
+        throw new Error(data.error)
       }
       return data
     } catch (error) {
@@ -116,5 +150,9 @@ export async function submitFeedback(payload) {
   if (!APPS_SCRIPT_URL) {
     return submitLocal(payload)
   }
-  return postWithRetry(payload)
+  const data = await postWithRetry(payload)
+  if (!data?.ok || !data.certificate?.id) {
+    throw new Error(data?.error || 'Could not save your feedback to the spreadsheet.')
+  }
+  return data
 }

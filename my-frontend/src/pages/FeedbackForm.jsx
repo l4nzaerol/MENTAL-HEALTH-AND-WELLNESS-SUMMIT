@@ -326,8 +326,7 @@ export default function FeedbackForm({ onIssued }) {
                 onChange={(event) => update('consent', event.target.checked)}
                 required
               />
-              I confirm that the name above can appear on my e-certificate and that this
-              feedback may be stored in the summit spreadsheet.
+              I confirm that the name above can appear on my e-certificate.
             </label>
           </>
         )}

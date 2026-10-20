@@ -1,8 +1,10 @@
 // Mental Health Summit feedback → Google Sheet
 // Spreadsheet: https://docs.google.com/spreadsheets/d/1nvBpnwLSeE9NtCkALwqPM1pbzL2WgEGik17pCtuFFCY/edit
-// After changing this file: in the spreadsheet go to Extensions > Apps Script, paste this
-// Code.gs, then Deploy > New deployment (or Manage deployments > Edit > New version)
-// as a Web app: Execute as Me, Who has access: Anyone. Put that URL in VITE_APPS_SCRIPT_URL.
+// After changing this file: open THIS spreadsheet (Mental Health Feedback) >
+// Extensions > Apps Script, paste this Code.gs, then Deploy > Manage deployments
+// > Edit (pencil) > Version: New version > Deploy. Execute as Me, Who has access: Anyone.
+// Put that /exec URL in my-frontend/.env as VITE_APPS_SCRIPT_URL. A script bound to
+// a different spreadsheet will not show rows here.
 const SPREADSHEET_ID = '1nvBpnwLSeE9NtCkALwqPM1pbzL2WgEGik17pCtuFFCY'
 const SHEET_NAME = 'Submissions'
 // Live website that shows certificates when a QR code is scanned (no trailing slash).
@@ -104,32 +106,51 @@ function asRating_(value) {
   return value
 }
 
-function generalSpeakerBlock_(payload) {
-  const answers = payload.speakerAnswers || {}
-  if (
-    answers.knowledge ||
-    answers.clarity ||
-    answers.overall ||
-    answers.comments ||
-    answers.engaging
-  ) {
-    return answers
+function parseMaybeObject_(value) {
+  if (value && typeof value === 'object') return value
+  if (typeof value !== 'string') return {}
+  const text = value.trim()
+  if (!text || (text.charAt(0) !== '{' && text.charAt(0) !== '[')) return {}
+  try {
+    const parsed = JSON.parse(text)
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch (error) {
+    return {}
   }
-  return answers['speaker-1'] || {}
+}
+
+function firstFilled_(values) {
+  for (let i = 0; i < values.length; i += 1) {
+    if (values[i] !== '' && values[i] !== null && values[i] !== undefined) return values[i]
+  }
+  return ''
+}
+
+function generalSpeakerBlock_(payload) {
+  const answers = parseMaybeObject_(payload.speakerAnswers)
+  const nested = parseMaybeObject_(answers['speaker-1'] || answers.speaker1)
+  const merged = {}
+  const keys = ['knowledge', 'clarity', 'engaging', 'examples', 'participation', 'professional', 'questions', 'overall', 'comments']
+  for (let i = 0; i < keys.length; i += 1) {
+    const id = keys[i]
+    const camel = 'speaker' + id.charAt(0).toUpperCase() + id.slice(1)
+    merged[id] = firstFilled_([answers[id], nested[id], payload[camel], payload[id]])
+  }
+  return merged
 }
 
 function speakerAnswerValues_(payload) {
   const block = generalSpeakerBlock_(payload)
-  const legacyRatings = payload.speakerRatings || {}
+  const legacyRatings = parseMaybeObject_(payload.speakerRatings)
   const values = []
   for (let q = 0; q < SPEAKER_QUESTIONS.length; q += 1) {
     let score = block[SPEAKER_QUESTIONS[q].id]
     if (!score && SPEAKER_QUESTIONS[q].id === 'overall') {
-      score = payload.speakersOverall || legacyRatings['speaker-1']
+      score = payload.speakersOverall || firstLegacySpeakerRating_(legacyRatings)
     }
     values.push(asRating_(score))
   }
-  values.push(block.comments || '')
+  values.push(block.comments || payload.speakerComments || '')
   return values
 }
 
@@ -166,26 +187,39 @@ const IDEMPOTENCY_INDEX = HEADERS.indexOf('IdempotencyKey')
 
 function doGet(e) {
   const params = (e && e.parameter) || {}
-  if (params.action === 'lookup') {
+  const action = String(params.action || '').toLowerCase()
+  if (action === 'lookup') {
     return lookupCertificateJson_(params)
+  }
+  if (action === 'status' || action === 'health') {
+    return spreadsheetStatusJson_()
+  }
+  if (action === 'submit') {
+    try {
+      const payload = validateSubmission_(parseIncoming_(e))
+      return json_(submitFeedback_(payload))
+    } catch (error) {
+      return json_({ ok: false, error: String(error && error.message ? error.message : error) })
+    }
   }
   if (params.view === 'cert' || params.view === 'certificate' || params.cert || params.id || params.c) {
     return renderPublicCertificate_(params)
   }
   try {
-    ensureHeaders_(getSheet_())
+    ensureHeaderRow_(getSheet_())
   } catch (error) {
     return json_({ ok: false, error: String(error && error.message ? error.message : error) })
   }
   return json_({
     ok: true,
     service: 'Mental Health Summit feedback',
+    spreadsheetId: SPREADSHEET_ID,
   })
 }
 
 function doPost(e) {
   try {
-    const raw = parseJsonBody_(e)
+    const raw = parseIncoming_(e)
     if (String(raw.action || '').toLowerCase() === 'lookup') {
       return lookupCertificateJson_({
         id: raw.certificateId || raw.id || raw.cert || raw.c,
@@ -765,24 +799,56 @@ function onOpen() {
     .addToUi()
 }
 
-function parseJsonBody_(e) {
-  if (!e || !e.postData || !e.postData.contents) {
+function parseIncoming_(e) {
+  const raw = {}
+  const params = (e && e.parameter) || {}
+  Object.keys(params).forEach(function (key) {
+    if (params[key] !== '' && params[key] != null) raw[key] = params[key]
+  })
+  if (params.payload) {
+    const nested = parseMaybeObject_(params.payload)
+    Object.keys(nested).forEach(function (key) {
+      raw[key] = nested[key]
+    })
+  }
+  if (e && e.postData && e.postData.contents) {
+    const contents = String(e.postData.contents || '').trim()
+    if (contents) {
+      const parsed = parseMaybeObject_(contents)
+      const hasJson = contents.charAt(0) === '{' || Object.keys(parsed).length > 0
+      if (hasJson) {
+        Object.keys(parsed).forEach(function (key) {
+          raw[key] = parsed[key]
+        })
+      }
+    }
+  }
+  if (!Object.keys(raw).length) {
     throw new Error('Empty request')
   }
-  return JSON.parse(e.postData.contents)
+  if (typeof raw.speakerAnswers === 'string') {
+    raw.speakerAnswers = parseMaybeObject_(raw.speakerAnswers)
+  }
+  return raw
+}
+
+function parseJsonBody_(e) {
+  return parseIncoming_(e)
 }
 
 function parsePayload_(e) {
-  return validateSubmission_(parseJsonBody_(e))
+  return validateSubmission_(parseIncoming_(e))
 }
 
 function validateSubmission_(payload) {
   const next = payload || {}
-  const fullName = String(next.fullName || '').trim()
-  const email = String(next.email || '').trim()
-  const address = String(next.address || '').trim()
-  const organization = String(next.organization || '').trim()
-  const age = Number(next.age)
+  const fullName = String(next.fullName || next.name || next.FullName || '').trim()
+  const email = String(next.email || next.Email || '').trim()
+  const address = String(next.address || next.Address || '').trim()
+  const organization = String(
+    next.organization || next.school || next.Organization || next['School / organization'] || '',
+  ).trim()
+  const age = Number(next.age || next.Age)
   if (!fullName || !email) {
     throw new Error('Name and email are required')
   }
@@ -800,7 +866,30 @@ function validateSubmission_(payload) {
   next.address = address
   next.age = age
   next.organization = organization
+  next.speakerAnswers = generalSpeakerBlock_(next)
   return next
+}
+
+function buildRowValues_(payload, certId, stamp, verifyUrl) {
+  const answers = speakerAnswerValues_(payload)
+  return [
+    stamp,
+    certId,
+    String(payload.fullName || '').trim(),
+    String(payload.email || '').toLowerCase().trim(),
+    String(payload.address || '').trim(),
+    payload.age,
+    String(payload.organization || '').trim(),
+  ]
+    .concat(answers)
+    .concat([
+      asRating_(payload.venueRating),
+      payload.venueComment || '',
+      asRating_(payload.seminarRating),
+      payload.seminarComments || '',
+      payload.idempotencyKey || '',
+      verifyUrl || '',
+    ])
 }
 
 function submitFeedback_(payload) {
@@ -810,9 +899,13 @@ function submitFeedback_(payload) {
   }
 
   try {
+    const ss = getSpreadsheet_()
+    if (ss.getId() !== SPREADSHEET_ID) {
+      throw new Error('Script is bound to the wrong spreadsheet. Open the Mental Health Feedback file and deploy this Code.gs from there.')
+    }
     const sheet = getSheet_()
-    ensureHeaders_(sheet)
-    const headers = writeHeaders_(sheet)
+    ensureHeaderRow_(sheet)
+    const headers = sheetHeaderNames_(sheet)
     const idempCol = columnForHeader_(headers, 'IdempotencyKey')
     const email = String(payload.email).toLowerCase().trim()
     const retryRow = findRowNumber_(sheet, idempCol, payload.idempotencyKey)
@@ -824,14 +917,14 @@ function submitFeedback_(payload) {
     const issuedAt = isNaN(now.getTime()) ? new Date().toISOString() : now.toISOString()
     const stamp = isNaN(now.getTime()) ? new Date() : now
     const verifyUrl = browserVerifyUrl_(payload, certId, issuedAt)
-    const record = buildSubmissionRecord_(payload, certId, stamp, verifyUrl)
-    const row = rowFromRecord_(record, HEADERS)
+    const row = padRow_(buildRowValues_(payload, certId, stamp, verifyUrl))
     writeDataRow_(sheet, retryRow || Math.max(sheet.getLastRow() + 1, 2), row)
     SpreadsheetApp.flush()
 
     return {
       ok: true,
       duplicate: Boolean(retryRow),
+      spreadsheetId: ss.getId(),
       certificate: {
         id: certId,
         fullName: String(payload.fullName).trim(),
@@ -863,22 +956,57 @@ function writeDataRow_(sheet, rowNumber, row) {
 
 function getSpreadsheet_() {
   const wanted = String(SPREADSHEET_ID || '').trim()
-  const active = SpreadsheetApp.getActive()
-  if (active && (!wanted || active.getId() === wanted)) return active
-  if (wanted) {
-    try {
-      return SpreadsheetApp.openById(wanted)
-    } catch (error) {
-      if (active) return active
-      throw new Error(
-        'Could not open the submissions spreadsheet. Bind this script to the spreadsheet Extensions > Apps Script, then paste Code.gs and deploy as a web app. Spreadsheet: https://docs.google.com/spreadsheets/d/' +
-          wanted +
-          '/edit',
-      )
-    }
+  if (!wanted) {
+    throw new Error('SPREADSHEET_ID is missing in Code.gs')
   }
-  if (active) return active
-  throw new Error('Could not open the submissions spreadsheet.')
+  try {
+    const opened = SpreadsheetApp.openById(wanted)
+    if (!opened || opened.getId() !== wanted) {
+      throw new Error('Opened a different spreadsheet')
+    }
+    return opened
+  } catch (error) {
+    throw new Error(
+      'Could not open the submissions spreadsheet ' +
+        wanted +
+        '. In that Google Sheet go to Extensions > Apps Script, paste this Code.gs, then Deploy > Manage deployments > New version. Spreadsheet: https://docs.google.com/spreadsheets/d/' +
+        wanted +
+        '/edit',
+    )
+  }
+}
+
+function spreadsheetStatusJson_() {
+  try {
+    const ss = getSpreadsheet_()
+    const sheet = getSheet_()
+    ensureHeaderRow_(sheet)
+    return json_({
+      ok: true,
+      spreadsheetId: ss.getId(),
+      spreadsheetName: ss.getName(),
+      sheetName: sheet.getName(),
+      lastRow: sheet.getLastRow(),
+      columns: HEADERS.length,
+    })
+  } catch (error) {
+    return json_({ ok: false, error: String(error && error.message ? error.message : error) })
+  }
+}
+
+function ensureHeaderRow_(sheet) {
+  if (sheet.getLastRow() < 1) {
+    writeCanonicalLayout_(sheet, [HEADERS])
+    return
+  }
+  const existing = sheetHeaderNames_(sheet)
+  if (headersMatch_(existing)) return
+  const needed = HEADERS.length
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns())
+  }
+  sheet.getRange(1, 1, 1, needed).setValues([HEADERS])
+  formatSheet_(sheet)
 }
 
 function getSheet_() {
